@@ -1,0 +1,20 @@
+{
+  "name": "dental-sr-tools",
+  "description": "Systematic-review tools for dentistry: Reviewer A and Reviewer B",
+  "owner": {
+    "name": "Anas Miqdad"
+  },
+  "plugins": [
+    {
+      "name": "dental-sr-reviewers",
+      "description": "Reviewer A and Reviewer B: senior AI reviewers for dual, independent PRISMA 2020-compliant screening in dental systematic reviews.",
+      "category": "productivity",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/anas94miqdad/claude-plugins-official.git",
+        "path": "plugins/dental-sr-reviewers",
+        "ref": "claude/dental-systematic-review-reviewer-lsbwht"
+      }
+    }
+  ]
+}
