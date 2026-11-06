@@ -24,9 +24,13 @@ legen ihn dem Nutzer zur Freigabe vor. Ohne Freigabe der Kriterien wird nicht ge
 
 ## 1. Unabhängigkeit und Verblindung
 
-1. Reviewer A und B screenen **unabhängig**: getrennte Kontexte, kein Zugriff auf die
-   Entscheidungsdatei des jeweils anderen, bevor beide ihre Runde abgeschlossen haben.
-2. Keine Kommunikation über einzelne Datensätze vor dem Abgleich.
+1. Reviewer A und B screenen **parallel und unabhängig**: gleichzeitig gestartet, getrennte
+   Kontexte, getrennte Arbeitsordner (`screening/reviewer_A/`, `screening/reviewer_B/`), eine
+   Ergebnisdatei pro Batch.
+2. Verblindung wird technisch erzwungen (Plugin-Hook `blinding_guard.py`): Kein Reviewer kann
+   Dateien des anderen oder abgeleitete Abgleichsdateien lesen, bevor der Koordinator die
+   Konsensphase öffnet (`screening/.consensus_open`). Bash/Glob/Grep sind für Reviewer gesperrt.
+   Keine Kommunikation über einzelne Datensätze vor dem Abgleich.
 3. Entscheidungen werden nach Abschluss nicht mehr verändert; Korrekturen erfolgen nur
    dokumentiert in der Konsensphase (Audit-Trail).
 4. Einschränkung (ehrlich dokumentieren): Beide Reviewer sind Instanzen desselben
@@ -125,9 +129,10 @@ begründen und in der Limitation diskutieren.
 Reihenfolge (im Protokoll vorab festlegen):
 
 1. Automatischer Abgleich (`screening_tools.py merge`).
-2. Jede Diskrepanz: Beide Reviewer sehen nun beide Begründungen und nehmen in einem
-   **Konsensgespräch** Stellung (dokumentiert: ursprüngliche Entscheidungen, Argumente,
-   Endentscheidung, „resolved_by: consensus“).
+2. Jede Diskrepanz: Beide Reviewer sehen nun beide Begründungen und geben **parallel und
+   unabhängig** eine begründete Stellungnahme ab. Stimmen die Stellungnahmen überein →
+   Konsens (dokumentiert: ursprüngliche Entscheidungen, Argumente, Endentscheidung,
+   „resolved_by: consensus“).
 3. Kein Konsens → **dritter Reviewer / Arbiter = menschliche Person** (Standard:
    der Nutzer bzw. Senior-Autor). KI darf in dieser Stufe nicht final entscheiden.
 4. Ti/Ab-Stufe, bei verbleibender Unklarheit: in den Volltext weiterleiten.
@@ -142,14 +147,17 @@ Pro Projekt im Ordner `screening/`:
 |---|---|
 | `protocol_snapshot.md` | Freigegebene Kriterien + Datum + Version, alle Amendments |
 | `records.csv` / `records_all.csv` | Dedupliziertes / vollständiges Set mit `record_id` |
-| `decisions_A_<stage>.csv`, `decisions_B_<stage>.csv` | Unabhängige Entscheidungen (unverändert) |
+| `reviewer_A/<stage>/batch_*.csv`, `reviewer_B/<stage>/batch_*.csv` | Unabhängige Entscheidungen je Batch (unverändert) |
+| `reviewer_A/log.md`, `reviewer_B/log.md` | Getrennte Reviewer-Logs |
+| `reviewer_A/consensus_<stage>.csv`, `reviewer_B/consensus_<stage>.csv` | Unabhängige Konsens-Stellungnahmen |
+| `arbiter_<stage>.csv` | Vom menschlichen Arbiter entschiedene Fälle |
 | `merged_<stage>.csv`, `conflicts_<stage>.csv` | Abgleich |
-| `consensus_<stage>.csv` | Konfliktlösungen mit `resolved_by` |
+| `consensus_<stage>.csv` | Konfliktlösungen mit `resolved_by` (zusammengeführt) |
 | `final_<stage>.csv` | Endentscheidungen |
 | `agreement_<stage>.json` | κ, 95 %-KI, PABAK, %-Übereinstimmung |
 | `excluded_fulltexts.md` | Tabelle ausgeschlossener Volltexte mit Grund (Supplement) |
 | `prisma/` | Zählungen, SVG-Flussdiagramm |
-| `screening_log.md` | Chronologisches Log: Datum, Schritt, wer, Modell/Version, Prompt-Version |
+| `screening_log.md` | Koordinations-Log: Datum, Schritt, Wellen/Pakete, Modell/Version, Prompt-Version |
 
 Format jeder Entscheidungszeile:
 
@@ -157,6 +165,8 @@ Format jeder Entscheidungszeile:
 record_id,reviewer,stage,decision,exclusion_reason,criterion,confidence,rationale
 R00017,A,tiab,exclude,E2 Wrong study design,S,high,"""in vitro study on extracted molars"""
 ```
+
+Datei: `screening/reviewer_A/tiab/batch_001.csv` (Name = Eingabe-Batch).
 
 ---
 

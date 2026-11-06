@@ -3,6 +3,18 @@
 Format: `JJJJ.MM.n` – Datum – Änderung – geprüft von. Jede inhaltliche Änderung an
 `evidence-base.md`, `screening-protocol.md` oder `dental-domain-knowledge.md` wird hier eingetragen.
 
+## 2026.11.1 – 2026-11-06 – Paralleles, technisch verblindetes Screening
+
+- Reviewer A und B arbeiten gleichzeitig in getrennten Arbeitsbereichen
+  (`screening/reviewer_A/`, `screening/reviewer_B/`, eine Datei pro Batch); bei großen
+  Datenmengen mehrere Instanzen pro Reviewer.
+- Plugin-Hook `blinding_guard.py` erzwingt die Verblindung (kein Zugriff auf Dateien des anderen
+  Reviewers oder Abgleichsdateien vor der Konsensphase; Bash/Glob/Grep für Reviewer gesperrt).
+- Konsensphase ebenfalls parallel: unabhängige Stellungnahmen, automatische Zusammenführung,
+  Rest an den menschlichen Arbiter.
+- `screening_tools.py`: neue Befehle `status`, `make-batches`, `consensus-merge`; `merge` liest
+  Batch-Ordner; `apply-consensus` akzeptiert mehrere Dateien.
+
 ## 2026.11.0 – 2026-11-06 – Erstversion
 
 - Evidenzbasis mit 70+ Quellen angelegt; alle PMIDs/DOIs am 2026-11-06 gegen PubMed

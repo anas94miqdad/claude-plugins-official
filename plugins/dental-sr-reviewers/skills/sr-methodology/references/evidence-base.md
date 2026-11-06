@@ -1,6 +1,6 @@
 # Evidenzbasis der Reviewer A und B
 
-- **Version:** 2026.11.0
+- **Version:** 2026.11.0 (Literaturstand; Plugin 2026.11.1)
 - **Stand der Literaturprüfung:** 2026-11-06
 - **Verifikation:** Jede Quelle wurde an diesem Datum gegen PubMed geprüft (PMID). Wo PubMed
   keinen Eintrag oder keine DOI hat, wurde die DOI über Crossref geprüft; das ist vermerkt.

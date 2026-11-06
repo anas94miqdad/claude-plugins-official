@@ -39,8 +39,9 @@ Offenlegung jeder KI-Nutzung, die Urteile trifft oder vorschlägt.
 > v…"], [dates of use]) was used as [a second / an additional] independent screener at the
 > [title/abstract and/or full-text] stage. Two separately instructed instances ("Reviewer A" and
 > "Reviewer B", with distinct dental-specialty profiles but identical eligibility criteria and
-> decision rules) screened records in isolated sessions without access to each other's
-> decisions. The complete prompts, decision logs and version history are provided in
+> decision rules) screened all records in parallel in isolated sessions and separate workspaces;
+> access to the other reviewer's decisions was technically blocked until both had completed the
+> respective stage. The complete prompts, decision logs and version history are provided in
 > Supplementary File [X]. Because both instances share the same underlying model, their errors
 > may be correlated; therefore, [all AI decisions were verified by a human reviewer / every
 > record was additionally screened by at least one human reviewer ([initials])], and all
@@ -85,7 +86,7 @@ Für die Endfassung des Diagramms empfiehlt sich die offizielle PRISMA-2020-Vorl
 
 | Date | Stage | Step | Performed by | Tool / model + version | Prompt/protocol version | Output file |
 |---|---|---|---|---|---|---|
-| 2026-11-06 | tiab | Calibration (n = 100) | Reviewer A, Reviewer B | [model] | protocol v1.0 | decisions_A_pilot.csv |
+| 2026-11-06 | pilot | Calibration (n = 100), A and B in parallel | Reviewer A, Reviewer B | [model] | protocol v1.0 | reviewer_A/pilot/, reviewer_B/pilot/ |
 
 ## 6. Limitations – Bausteine
 

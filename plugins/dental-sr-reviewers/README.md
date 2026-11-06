@@ -10,7 +10,28 @@ KI-Offenlegung und eine Tabelle der ausgeschlossenen Studien.
 |---|---|---|
 | Klinik | Parodontologie, Implantologie, Oralchirurgie, Oralmedizin | Zahnerhaltung/Kariologie, Endodontie, Prothetik, Dentalmaterialien, KFO, Kinderzahnheilkunde, digitale Zahnmedizin |
 | Methodik | Klinische Epidemiologie, RCT/Kohorte, RoB 2, ROBINS-I/-E, GRADE | Biostatistik/Metaanalyse, diagnostische Genauigkeit (QUADAS-2), In-vitro (RoBDEMAT), Tierstudien (SYRCLE) |
-| Regeln | identisches Protokoll, identische Entscheidungsregeln, strikt verblindet voneinander | ← |
+| Regeln | identisches Protokoll, identische Entscheidungsregeln | ← |
+| Arbeitsweise | **parallel und gleichzeitig**, eigener Ordner `screening/reviewer_A/` | **parallel und gleichzeitig**, eigener Ordner `screening/reviewer_B/` |
+
+## Parallel und unabhängig – wie das garantiert wird
+
+1. **Gleichzeitiger Start:** Der Koordinator (`/dental-sr-reviewers:screen`) startet Reviewer A und
+   Reviewer B in derselben Nachricht als Hintergrund-Agenten auf denselben Batches. Bei vielen
+   Datensätzen laufen mehrere Instanzen pro Reviewer, bis zu 6 Agenten je Welle.
+2. **Getrennte Arbeitsbereiche:** Jeder Reviewer schreibt nur in seinen eigenen Ordner, und zwar
+   eine Datei pro Batch. Es gibt keine gemeinsamen Dateien und damit keine Schreibkonflikte.
+3. **Technische Verblindung:** Der Plugin-Hook `hooks/blinding_guard.py` blockiert jeden Zugriff
+   eines Reviewers auf den Ordner des anderen und auf die Abgleichsdateien (`merged_*`,
+   `conflicts_*`, `final_*` …). Bash, Glob und Grep sind für die Reviewer gesperrt. Erst wenn der
+   Koordinator `screening/.consensus_open` anlegt, dürfen beide die Konfliktliste lesen.
+4. **Paralleler Konsens:** Zu jedem Konflikt geben beide Reviewer gleichzeitig und unabhängig
+   eine Stellungnahme ab. Stimmen sie überein, gilt das als Konsens; alles andere entscheidest du
+   als Arbiter.
+5. **Fortschritt:** `screening_tools.py status --stage tiab` zeigt pro Batch, ob A und B fertig sind.
+   Erst bei `ready_to_merge: true` wird abgeglichen.
+
+Voraussetzung für den Hook: `python3` (oder `python`) im PATH. Ohne Python greift die
+technische Sperre nicht; die Verblindung beruht dann nur auf den Anweisungen an die Reviewer.
 
 > **Wichtig – wissenschaftliche Integrität.** Beide Reviewer sind Instanzen desselben
 > Sprachmodells. Ihre Fehler können deshalb korreliert sein, und sie ersetzen **nicht** zwei
@@ -31,6 +52,9 @@ dental-sr-reviewers/
 ├── agents/
 │   ├── reviewer-a.md            # Senior Reviewer A (Subagent, persistentes Memory)
 │   └── reviewer-b.md            # Senior Reviewer B
+├── hooks/
+│   ├── hooks.json               # PreToolUse-Hook
+│   └── blinding_guard.py        # erzwingt die Verblindung zwischen A und B
 ├── skills/
 │   ├── sr-methodology/          # gemeinsame Wissensbasis (wird automatisch genutzt)
 │   │   └── references/
@@ -40,7 +64,7 @@ dental-sr-reviewers/
 │   │       ├── reporting-templates.md      # Methods/Results, KI-Offenlegung, Tabellen, Checkliste
 │   │       └── changelog.md
 │   ├── screen/                  # /dental-sr-reviewers:screen – kompletter Workflow
-│   │   └── scripts/screening_tools.py      # Deduplikation, Batches, κ/PABAK, Konflikte, PRISMA, ASReview-Export
+│   │   └── scripts/screening_tools.py      # Deduplikation, Batches, Status, κ/PABAK, Konsens, PRISMA, ASReview-Export
 │   ├── prisma-report/           # /dental-sr-reviewers:prisma-report
 │   └── update-evidence/         # /dental-sr-reviewers:update-evidence
 └── scripts/build_claude_ai_skills.py       # baut ZIP-Skills für claude.ai
@@ -74,9 +98,11 @@ Alternative ohne Marketplace (eine Sitzung): `claude --plugin-dir <pfad>/plugins
      `dental-sr-coordinator.zip`, `dental-sr-update-evidence.zip`
 2. claude.ai → **Settings → Capabilities → Skills → Upload skill**, jede ZIP-Datei einzeln hochladen.
    „Code execution and file creation“ muss aktiviert sein.
-3. Die Skills sind dann in allen Chats und Projekten deines Accounts verfügbar. Für echte
-   Unabhängigkeit: Reviewer A und Reviewer B jeweils in einem **eigenen Chat** ausführen und den
-   Abgleich in einem dritten Chat mit `dental-sr-coordinator` machen.
+3. Die Skills sind dann in allen Chats und Projekten deines Accounts verfügbar. Parallel und
+   unabhängig heißt hier: Reviewer A und Reviewer B laufen gleichzeitig in **zwei eigenen Chats**
+   (z. B. zwei Browser-Tabs) mit derselben Batch-Datei, und der Abgleich folgt in einem dritten Chat
+   mit `dental-sr-coordinator`. Hooks gibt es in claude.ai nicht; die Trennung entsteht durch die
+   getrennten Chats.
 
 ---
 
@@ -92,14 +118,15 @@ Alternative ohne Marketplace (eine Sitzung): `claude --plugin-dir <pfad>/plugins
 | Einzelnen Reviewer direkt ansprechen | `@agent-dental-sr-reviewers:reviewer-a Prüfe meine Einschlusskriterien …` |
 
 Der Workflow legt im Projekt einen Ordner `screening/` mit vollständigem Audit-Trail an
-(Protokoll-Snapshot, getrennte Entscheidungsdateien A/B, Konflikte, Konsens, finale Entscheidungen,
+(Protokoll-Snapshot, getrennte Reviewer-Ordner A/B mit einer Datei pro Batch, Konflikte, Konsens, finale Entscheidungen,
 κ-Statistik, PRISMA-Zahlen und SVG, Screening-Log).
 
 Das Skript funktioniert auch eigenständig (nur Python-Standardbibliothek):
 
 ```bash
 python3 skills/screen/scripts/screening_tools.py prepare export.ris --out screening
-python3 skills/screen/scripts/screening_tools.py merge --a screening/decisions_A_tiab.csv --b screening/decisions_B_tiab.csv --stage tiab --out screening
+python3 skills/screen/scripts/screening_tools.py status --stage tiab
+python3 skills/screen/scripts/screening_tools.py merge --a screening/reviewer_A/tiab --b screening/reviewer_B/tiab --stage tiab --out screening
 python3 skills/screen/scripts/screening_tools.py prisma --counts screening/prisma/counts.json --out screening/prisma
 python3 skills/screen/scripts/screening_tools.py export-asreview --records screening/records.csv --final screening/final_tiab.csv --out asreview_import.csv
 ```

@@ -10,10 +10,23 @@ prepare         Normalise a RIS/CSV/TSV export into records.csv, flag likely
 merge           Merge the independent decision files of Reviewer A and B,
                 compute agreement statistics (Cohen's kappa with 95% CI, PABAK,
                 percentage agreement, prevalence/bias indices) and list conflicts.
+status          Progress of the parallel screening: which batches Reviewer A and
+                Reviewer B have completed, missing/duplicate records, ready to merge?
+make-batches    Create pilot (random sample) or full-text batches for both reviewers.
+consensus-merge Combine the two reviewers' independent consensus statements; list the
+                remaining conflicts for the human arbiter.
 apply-consensus Add consensus/arbiter decisions to the merged file -> final decisions.
 prisma          Build PRISMA 2020 flow-diagram counts (JSON + SVG + Markdown).
 export-asreview Write a CSV that ASReview LAB can import with prior labels
                 (column ``asreview_label``: 1 = include, 0 = exclude).
+
+Parallel layout (each reviewer writes only into its own folder, one file per batch)
+-----------------------------------------------------------------------------------
+screening/batches/batch_001.csv            input batches (title/abstract)
+screening/batches_pilot/batch_pilot.csv    calibration sample
+screening/batches_fulltext/batch_001.csv   full-text batches
+screening/reviewer_A/<stage>/batch_001.csv Reviewer A decisions   (stage: pilot|tiab|fulltext)
+screening/reviewer_B/<stage>/batch_001.csv Reviewer B decisions
 
 Decision file format (one row per record and reviewer)
 ------------------------------------------------------
@@ -335,12 +348,31 @@ def _mchugh(k: float) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _decision_files(path: Path) -> list[Path]:
+    if path.is_dir():
+        files = sorted(p for p in path.glob("*.csv") if not p.name.startswith("."))
+        if not files:
+            sys.exit(f"{path}: no decision CSV files found")
+        return files
+    if not path.exists():
+        sys.exit(f"{path}: not found")
+    return [path]
+
+
 def _read_decisions(path: Path, stage: str) -> "OrderedDict[str, dict]":
+    """Read one decision CSV or a folder of per-batch decision CSVs."""
     out: "OrderedDict[str, dict]" = OrderedDict()
+    for f in _decision_files(path):
+        _read_decision_file(f, stage, out)
+    return out
+
+
+def _read_decision_file(path: Path, stage: str, out: "OrderedDict[str, dict]") -> None:
     with path.open(encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
             row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-            if row.get("stage", stage).lower() != stage:
+            row_stage = row.get("stage", stage).lower() or stage
+            if row_stage != stage and not (stage == "tiab" and row_stage == "pilot"):
                 continue
             dec = row.get("decision", "").lower()
             dec = {"in": "include", "ex": "exclude", "maybe": "unclear", "?": "unclear"}.get(dec, dec)
@@ -351,12 +383,14 @@ def _read_decisions(path: Path, stage: str) -> "OrderedDict[str, dict]":
             if not rid:
                 sys.exit(f"{path}: row without record_id")
             if rid in out:
-                sys.exit(f"{path}: duplicate decision for {rid}")
+                sys.exit(f"{path}: duplicate decision for {rid} (record screened twice by the same reviewer)")
             out[rid] = row
-    return out
 
 
 def cmd_merge(a: argparse.Namespace) -> None:
+    label = a.stage
+    if a.stage == "pilot":
+        a.stage = "tiab"
     A = _read_decisions(Path(a.a), a.stage)
     B = _read_decisions(Path(a.b), a.stage)
     missing_a = sorted(set(B) - set(A))
@@ -406,7 +440,7 @@ def cmd_merge(a: argparse.Namespace) -> None:
             conflicts.append(row)
 
     cols = list(merged[0].keys()) if merged else ["record_id"]
-    for name, data in (("merged_" + a.stage, merged), ("conflicts_" + a.stage, conflicts)):
+    for name, data in (("merged_" + label, merged), ("conflicts_" + label, conflicts)):
         with (out / f"{name}.csv").open("w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=cols)
             w.writeheader()
@@ -439,17 +473,113 @@ def cmd_merge(a: argparse.Namespace) -> None:
         "exclusion_reasons_B": dict(Counter(B[r].get("exclusion_reason", "") for r in ids if B[r]["decision"] == "exclude")),
         "created": _dt.datetime.now().isoformat(timespec="seconds"),
     }
-    (out / f"agreement_{a.stage}.json").write_text(json.dumps(stats, indent=2))
+    stats["stage"] = label
+    (out / f"agreement_{label}.json").write_text(json.dumps(stats, indent=2))
 
     k = primary.get("kappa")
     ci = primary.get("ci95", ["NA", "NA"])
     print(json.dumps({k_: stats[k_] for k_ in ("stage", "records_compared", "conflicts", "status_counts")}, indent=2))
     print(
         f"\nReporting sentence: Inter-rater agreement at the "
-        f"{'title/abstract' if a.stage == 'tiab' else 'full-text'} stage was "
+        f"{ {'pilot': 'calibration (pilot)', 'tiab': 'title/abstract', 'fulltext': 'full-text'}[label] } stage was "
         f"{primary.get('percent_agreement')}% (Cohen's kappa = {k}, 95% CI {ci[0]} to {ci[1]}; "
         f"PABAK = {primary.get('pabak')}), n = {len(ids)} records."
     )
+
+
+# --------------------------------------------------------------------------- #
+# status (parallel progress)
+# --------------------------------------------------------------------------- #
+
+
+def _batch_ids(path: Path) -> list[str]:
+    return [r.get("record_id", "") for r in _read_table(path) if r.get("record_id")]
+
+
+def cmd_status(a: argparse.Namespace) -> None:
+    root = Path(a.root)
+    bdir = Path(a.batches) if a.batches else root / {"tiab": "batches", "pilot": "batches_pilot", "fulltext": "batches_fulltext"}[a.stage]
+    batches = sorted(bdir.glob("*.csv"))
+    if not batches:
+        sys.exit(f"No input batches in {bdir}")
+    report, todo = [], {"A": [], "B": []}
+    for b in batches:
+        ids = set(_batch_ids(b))
+        line = {"batch": b.name, "records": len(ids)}
+        for rev in ("A", "B"):
+            f = root / f"reviewer_{rev}" / a.stage / b.name
+            if not f.exists():
+                line[rev] = "open"
+                todo[rev].append(b.name)
+                continue
+            got = OrderedDict()
+            try:
+                _read_decision_file(f, "tiab" if a.stage == "pilot" else a.stage, got)
+            except SystemExit as e:
+                line[rev] = f"INVALID ({e})"
+                todo[rev].append(b.name)
+                continue
+            missing, extra = ids - set(got), set(got) - ids
+            if missing or extra:
+                line[rev] = f"incomplete (missing {len(missing)}, foreign {len(extra)})"
+                todo[rev].append(b.name)
+            else:
+                line[rev] = "done"
+        report.append(line)
+    print(f"{'batch':<22}{'n':>5}  {'Reviewer A':<34}{'Reviewer B':<34}")
+    for r in report:
+        print(f"{r['batch']:<22}{r['records']:>5}  {r['A']:<34}{r['B']:<34}")
+    ready = not todo["A"] and not todo["B"]
+    summary = {"stage": a.stage, "batches": len(batches), "open_A": todo["A"], "open_B": todo["B"], "ready_to_merge": ready}
+    print(json.dumps(summary, indent=2))
+    sys.exit(0 if ready else 3)
+
+
+# --------------------------------------------------------------------------- #
+# make-batches (pilot sample / full-text set)
+# --------------------------------------------------------------------------- #
+
+
+def _write_batches(rows: list[dict], fields: list[str], out: Path, size: int, prefix: str = "batch") -> int:
+    out.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for start in range(0, len(rows), size):
+        n += 1
+        name = f"{prefix}_{n:03d}.csv"
+        with (out / name).open("w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows[start : start + size])
+    return n
+
+
+def cmd_make_batches(a: argparse.Namespace) -> None:
+    import random
+
+    recs = _read_table(Path(a.records))
+    fields = list(recs[0].keys()) if recs else ["record_id"]
+    if a.kind == "pilot":
+        if a.n:
+            n = a.n
+        elif len(recs) >= 500:
+            n = max(50, min(100, round(len(recs) * 0.1)))
+        else:
+            n = max(1, round(len(recs) * 0.1))
+        n = min(n, len(recs))
+        rnd = random.Random(a.seed)
+        sample = sorted(rnd.sample(recs, n), key=lambda r: r.get("record_id", ""))
+        nb = _write_batches(sample, fields, Path(a.out), a.batch_size or n, prefix="batch_pilot")
+        print(json.dumps({"kind": "pilot", "records": n, "seed": a.seed, "batches": nb, "out": a.out}, indent=2))
+        return
+    if not a.final:
+        sys.exit("--final final_tiab.csv is required for full-text batches")
+    keep = {r["record_id"] for r in _read_table(Path(a.final)) if r.get("final_decision") == "include"}
+    rows = [r for r in recs if r.get("record_id") in keep]
+    for r in rows:
+        r["fulltext_path"] = f"fulltexts/{r['record_id']}.pdf"
+    fields = fields + (["fulltext_path"] if "fulltext_path" not in fields else [])
+    nb = _write_batches(rows, fields, Path(a.out), a.batch_size or 10)
+    print(json.dumps({"kind": "fulltext", "records": len(rows), "batches": nb, "out": a.out}, indent=2))
 
 
 # --------------------------------------------------------------------------- #
@@ -460,10 +590,12 @@ def cmd_merge(a: argparse.Namespace) -> None:
 def cmd_apply_consensus(a: argparse.Namespace) -> None:
     merged = _read_table(Path(a.merged))
     cons = {}
-    with Path(a.consensus).open(encoding="utf-8-sig", newline="") as fh:
-        for row in csv.DictReader(fh):
-            row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-            cons[row["record_id"]] = row
+    for cf in a.consensus:
+        with Path(cf).open(encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
+                if row.get("final_decision", "").lower() in ("include", "exclude"):
+                    cons[row["record_id"]] = row
     unresolved = []
     for r in merged:
         if r["status"] != "conflict":
@@ -492,6 +624,42 @@ def cmd_apply_consensus(a: argparse.Namespace) -> None:
     }, indent=2))
     if unresolved:
         sys.exit(f"{len(unresolved)} conflicts still unresolved.")
+
+
+# --------------------------------------------------------------------------- #
+# consensus-merge: combine both reviewers' (parallel) consensus statements
+# --------------------------------------------------------------------------- #
+
+
+def cmd_consensus_merge(a: argparse.Namespace) -> None:
+    conflicts = _read_table(Path(a.conflicts))
+    stA = {r["record_id"]: r for r in _read_table(Path(a.a))}
+    stB = {r["record_id"]: r for r in _read_table(Path(a.b))}
+    out_rows, arb = [], []
+    for c in conflicts:
+        rid = c["record_id"]
+        da = (stA.get(rid, {}).get("decision") or "").lower()
+        db = (stB.get(rid, {}).get("decision") or "").lower()
+        if da and da == db and da in ("include", "exclude"):
+            reason = stA[rid].get("exclusion_reason") or stB[rid].get("exclusion_reason") or ""
+            out_rows.append({"record_id": rid, "final_decision": da, "exclusion_reason": reason if da == "exclude" else "", "resolved_by": "consensus"})
+        elif a.stage in ("tiab", "pilot") and "exclude" not in (da, db) and (da or db):
+            out_rows.append({"record_id": rid, "final_decision": "include", "exclusion_reason": "", "resolved_by": "consensus (unclear -> full text)"})
+        else:
+            arb.append({"record_id": rid, "title": c.get("title", ""),
+                        "A_position": da, "A_argument": stA.get(rid, {}).get("argument", ""),
+                        "B_position": db, "B_argument": stB.get(rid, {}).get("argument", "")})
+    with Path(a.out).open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=["record_id", "final_decision", "exclusion_reason", "resolved_by"])
+        w.writeheader()
+        w.writerows(out_rows)
+    if arb:
+        with Path(a.arbiter_out).open("w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(arb[0].keys()) + ["final_decision", "exclusion_reason", "resolved_by"])
+            w.writeheader()
+            w.writerows(arb)
+    print(json.dumps({"conflicts": len(conflicts), "resolved_by_consensus": len(out_rows),
+                      "needs_human_arbiter": len(arb), "arbiter_file": a.arbiter_out if arb else None}, indent=2))
 
 
 # --------------------------------------------------------------------------- #
@@ -716,17 +884,43 @@ def main(argv=None) -> None:
     s = sub.add_parser("merge")
     s.add_argument("--a", required=True, help="Reviewer A decision CSV")
     s.add_argument("--b", required=True, help="Reviewer B decision CSV")
-    s.add_argument("--stage", choices=["tiab", "fulltext"], default="tiab")
+    s.add_argument("--stage", choices=["pilot", "tiab", "fulltext"], default="tiab")
     s.add_argument("--records", help="records.csv (adds titles to the output)")
     s.add_argument("--out", default="screening")
     s.add_argument("--allow-missing", action="store_true")
     s.set_defaults(fn=cmd_merge)
 
+    s = sub.add_parser("status")
+    s.add_argument("--root", default="screening")
+    s.add_argument("--stage", choices=["pilot", "tiab", "fulltext"], default="tiab")
+    s.add_argument("--batches", help="input batch folder (default derived from stage)")
+    s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("make-batches")
+    s.add_argument("kind", choices=["pilot", "fulltext"])
+    s.add_argument("--records", required=True)
+    s.add_argument("--final", help="final_tiab.csv (full-text batches)")
+    s.add_argument("--out", required=True)
+    s.add_argument("--n", type=int, help="pilot sample size")
+    s.add_argument("--seed", type=int, default=20261106)
+    s.add_argument("--batch-size", type=int)
+    s.set_defaults(fn=cmd_make_batches)
+
     s = sub.add_parser("apply-consensus")
     s.add_argument("--merged", required=True)
-    s.add_argument("--consensus", required=True, help="CSV: record_id, final_decision, exclusion_reason, resolved_by")
+    s.add_argument("--consensus", required=True, nargs="+",
+                   help="CSV(s): record_id, final_decision, exclusion_reason, resolved_by (consensus file, completed arbiter file)")
     s.add_argument("--out", required=True)
     s.set_defaults(fn=cmd_apply_consensus)
+
+    s = sub.add_parser("consensus-merge")
+    s.add_argument("--conflicts", required=True)
+    s.add_argument("--a", required=True, help="screening/reviewer_A/consensus_<stage>.csv")
+    s.add_argument("--b", required=True, help="screening/reviewer_B/consensus_<stage>.csv")
+    s.add_argument("--stage", choices=["pilot", "tiab", "fulltext"], default="tiab")
+    s.add_argument("--out", required=True, help="consensus_<stage>.csv")
+    s.add_argument("--arbiter-out", required=True, help="arbiter_<stage>.csv (to be completed by a human)")
+    s.set_defaults(fn=cmd_consensus_merge)
 
     s = sub.add_parser("prisma")
     s.add_argument("--counts", required=True, help="JSON with PRISMA 2020 counts")

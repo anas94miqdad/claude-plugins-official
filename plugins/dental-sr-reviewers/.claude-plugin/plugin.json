@@ -1,7 +1,7 @@
 {
   "name": "dental-sr-reviewers",
   "displayName": "Dental SR Reviewers (Reviewer A & B)",
-  "version": "2026.11.0",
+  "version": "2026.11.1",
   "description": "Two senior AI reviewers (Reviewer A and Reviewer B) with dental expertise for dual, independent PRISMA 2020-compliant study screening in systematic reviews, with a verified, versioned and updatable evidence base, kappa statistics, PRISMA flow diagram and publication-ready documentation.",
   "author": {
     "name": "Anas Miqdad"
@@ -9,5 +9,13 @@
   "homepage": "https://github.com/anas94miqdad/claude-plugins-official/tree/claude/dental-systematic-review-reviewer-lsbwht/plugins/dental-sr-reviewers",
   "repository": "https://github.com/anas94miqdad/claude-plugins-official",
   "license": "Apache-2.0",
-  "keywords": ["systematic-review", "dentistry", "PRISMA", "screening", "evidence-synthesis", "meta-analysis", "cochrane"]
+  "keywords": [
+    "systematic-review",
+    "dentistry",
+    "PRISMA",
+    "screening",
+    "evidence-synthesis",
+    "meta-analysis",
+    "cochrane"
+  ]
 }
